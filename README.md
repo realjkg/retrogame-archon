@@ -9,7 +9,11 @@ A self-contained browser recreation, with the **Commodore 64 release** as the re
 - Board: arrows and Z/Enter to select; X to cancel. Touch the board or use the on-screen pad.
 - Combat: **hold fire and a direction to aim/shoot; release fire to move**. All eight directions work, including the corner buttons on touch devices.
 - Second player: WASD and Shift/F, or the upper touch pad.
-- Sound starts after a tap/key press. SOUND ON/OFF mutes or enables it. A high recharge bell belongs to Light; a low bell belongs to Dark.
+- Sound is enabled by default. Every browser keeps audio suspended until the player interacts, so it starts on your first tap, click or key press — pointer, touch, mouse and keyboard events all trigger it, and a silent buffer is played inside the gesture for iOS Safari. If the browser suspends audio later (tab switch, power saving) the next sound resumes it. SOUND ON/OFF mutes or enables it. A high recharge bell belongs to Light; a low bell belongs to Dark.
+
+## Play offline
+
+The game is this single `index.html` with no external requests of any kind — no scripts, styles, fonts, or images are fetched. The **DOWNLOAD** button beside the sound control saves it; open the saved file in any browser and it plays with no network. The button hides itself when the page is already running from a local file.
 
 ## C64 fidelity corrections
 

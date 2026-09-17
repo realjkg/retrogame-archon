@@ -47,7 +47,9 @@ h1{font-size:22px;margin:0;letter-spacing:.14em;color:var(--gold);font-weight:80
 small.tip{color:var(--dim);font-size:11px;max-width:330px;line-height:1.45}
 button{font:inherit;cursor:pointer}
 .soundrow{display:flex;align-items:center;gap:12px;margin:6px 0 12px;font-size:11px;color:var(--dim)}
-#sound{background:var(--panel2);color:var(--ink);border:1px solid var(--line);padding:9px 12px;min-height:40px}
+#sound,#download{background:var(--panel2);color:var(--ink);border:1px solid var(--line);padding:9px 12px;min-height:40px;border-radius:10px}
+#download{display:flex;align-items:center;text-decoration:none;font-size:11px;letter-spacing:.04em;white-space:nowrap}
+#download.hidden{display:none}
 #stage{border-radius:0;background:#000}
 canvas{image-rendering:pixelated}
 .btn{touch-action:none}
@@ -82,7 +84,7 @@ canvas{image-rendering:pixelated}
       </div>
     </div>
   </div>
-  <div class="soundrow"><button id="sound" type="button" aria-pressed="true">SOUND ON</button><span id="audio-status">Tap a control to enable audio</span></div>
+  <div class="soundrow"><button id="sound" type="button" aria-pressed="true">SOUND ON</button><a id="download" href="index.html" download="archon.html">DOWNLOAD</a><span id="audio-status">Tap a control to enable audio</span></div>
 </div>
 <script>
 "use strict";
@@ -246,19 +248,32 @@ function audioLabel(){
   document.getElementById("audio-status").textContent=!SOUND.enabled?"Muted":
     SOUND.ctx?.state==="running"?"High bell: Light ready · Low bell: Dark ready":"Tap a control to enable audio";
 }
+// Sound is on by default, but every browser keeps a new AudioContext suspended
+// until a user gesture. This runs on the first touch, click or key of any kind,
+// so the first thing the player does is also what starts the audio.
 function unlockAudio(){
   if(!SOUND.enabled)return;
+  if(SOUND.ctx&&SOUND.ctx.state==="running")return;   // already live — nothing to do
   try{
     if(!SOUND.ctx){const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;
       SOUND.ctx=new Audio(); SOUND.master=SOUND.ctx.createGain();
       SOUND.master.gain.value=0.18; SOUND.master.connect(SOUND.ctx.destination);
       SOUND.ctx.onstatechange=audioLabel;}
+    // iOS Safari needs a buffer actually played inside the gesture; resume() alone
+    // leaves the context suspended there. Harmless everywhere else.
+    if(SOUND.ctx.createBuffer&&SOUND.ctx.createBufferSource){
+      const b=SOUND.ctx.createBuffer(1,1,Math.max(3000,SOUND.ctx.sampleRate||44100));
+      const src=SOUND.ctx.createBufferSource(); src.buffer=b;
+      src.connect(SOUND.ctx.destination); (src.start||src.noteOn).call(src,0);
+    }
     if(SOUND.ctx.state!=="running")SOUND.ctx.resume().then(audioLabel).catch(()=>{});
     audioLabel();
   }catch(e){document.getElementById("audio-status").textContent="Audio unavailable";}
 }
 function tone(hz,endHz,seconds,type="square",level=.3){
-  const a=SOUND.ctx;if(!SOUND.enabled||!a||a.state!=="running"||document.hidden)return;
+  const a=SOUND.ctx;if(!SOUND.enabled||!a||document.hidden)return;
+  // Safari suspends the context on its own (tab switch, silent switch, power save).
+  if(a.state!=="running"){if(a.state==="suspended")a.resume?.().then(audioLabel).catch(()=>{});return;}
   // Three simultaneous voices keep the effects spare, like the C64's SID.
   if(SOUND.voices.size>=3){const v=SOUND.voices.values().next().value;v.stop();SOUND.voices.delete(v);}
   const o=a.createOscillator(),g=a.createGain(),t=a.currentTime;
@@ -282,13 +297,32 @@ function attackSound(f){
 function hitSound(){const t=SOUND.ctx?.currentTime??0;if(t-SOUND.lastHit<.08)return;SOUND.lastHit=t;tone(95,30,.08,"sawtooth",.45);}
 function clearKeys(){for(const k of Object.keys(keys))delete keys[k];document.querySelectorAll(".btn.on").forEach(el=>el.classList.remove("on"));}
 addEventListener("blur",clearKeys);
-document.addEventListener("visibilitychange",()=>{if(document.hidden){clearKeys();if(SOUND.master)SOUND.master.gain.value=0;}else if(SOUND.master)SOUND.master.gain.value=SOUND.enabled?.18:0;});
-document.addEventListener("pointerdown",unlockAudio,{capture:true});
-document.addEventListener("keydown",unlockAudio,{capture:true});
+document.addEventListener("visibilitychange",()=>{
+  if(document.hidden){clearKeys();if(SOUND.master)SOUND.master.gain.value=0;return;}
+  if(SOUND.master)SOUND.master.gain.value=SOUND.enabled?.18:0;
+  unlockAudio();                                     // the browser may have suspended us
+});
+// Widest possible set of first-gesture hooks: pointer events cover modern browsers,
+// touch and mouse cover the older ones, and the game is playable by keyboard alone.
+for(const ev of ["pointerdown","pointerup","touchstart","touchend","mousedown","click","keydown"])
+  document.addEventListener(ev,unlockAudio,{capture:true,passive:true});
 document.getElementById("sound").addEventListener("click",()=>{
   SOUND.enabled=!SOUND.enabled;if(SOUND.master)SOUND.master.gain.value=SOUND.enabled?.18:0;
   if(SOUND.enabled){unlockAudio();readySound("L");}audioLabel();
 });
+
+/* ============ download for offline play ============ */
+// The whole game is this one file with no external requests, so saving it is all
+// that "install" means. Served over http(s) the download attribute saves the
+// pristine source; opened from disk there is nothing left to fetch.
+(function(){
+  const dl=document.getElementById("download"); if(!dl)return;
+  try{
+    if(location.protocol==="file:"){dl.classList.add("hidden");return;}
+    dl.href=location.href.split("#")[0].split("?")[0];
+    dl.title="Save this page and play offline — no network needed afterwards";
+  }catch(e){}
+})();
 
 /* ============ state ============ */
 const G={mode:"pvc",human:{L:true,D:false},phase:"menu",turnPhase:"select",
@@ -825,7 +859,8 @@ function mainMenu(){
   <div class="menuitem" data-mode="cvc">CPU vs CPU &nbsp;<span style="opacity:.7">demo</span></div>
   <small class="tip">D-pad moves the cursor · A selects and confirms · B cancels · SPELL opens the seven
   one-shot spells. Combat: hold A + a direction to aim and fire; release A to move. High bell = Light ready, low bell = Dark ready. 1P vs 2P adds a second pad at the top for Dark.
-  Keyboard: arrows + Z/X, and WASD + Shift for player two.</small>`);
+  Keyboard: arrows + Z/X, and WASD + Shift for player two. Sound is on by default and starts with your first
+  tap or key press, as browsers require. DOWNLOAD saves the game as a single file you can play offline.</small>`);
 }
 
 /* ============ rendering ============ */
