@@ -45,26 +45,32 @@ h1{font-size:22px;margin:0;letter-spacing:.14em;color:var(--gold);font-weight:80
 .spellgrid .menuitem{width:auto;padding:9px 6px;font-size:12px}
 .menuitem.used{opacity:.32}
 small.tip{color:var(--dim);font-size:11px;max-width:330px;line-height:1.45}
+button{font:inherit;cursor:pointer}
+.soundrow{display:flex;align-items:center;gap:12px;margin:6px 0 12px;font-size:11px;color:var(--dim)}
+#sound{background:var(--panel2);color:var(--ink);border:1px solid var(--line);padding:9px 12px;min-height:40px}
+#stage{border-radius:0;background:#000}
+canvas{image-rendering:pixelated}
+.btn{touch-action:none}
 </style>
 </head>
 <body>
 <div id="wrap">
-  <div id="status">Loading…</div>
+  <div id="status" role="status">Loading…</div>
   <div id="stage"><canvas id="cv"></canvas><div id="overlay"></div></div>
   <div id="pads">
     <div class="padrow flip" id="pad2" style="display:none">
       <div class="dpad">
-        <div></div><div class="btn" data-k="2U">▲</div><div></div>
+        <div class="btn" data-k="2U,2L">↖</div><div class="btn" data-k="2U">▲</div><div class="btn" data-k="2U,2R">↗</div>
         <div class="btn" data-k="2L">◀</div><div></div><div class="btn" data-k="2R">▶</div>
-        <div></div><div class="btn" data-k="2D">▼</div><div></div>
+        <div class="btn" data-k="2D,2L">↙</div><div class="btn" data-k="2D">▼</div><div class="btn" data-k="2D,2R">↘</div>
       </div>
       <div><div class="btn abtn" data-k="2A">FIRE</div></div>
     </div>
     <div class="padrow" id="pad1">
       <div class="dpad">
-        <div></div><div class="btn" data-k="1U">▲</div><div></div>
+        <div class="btn" data-k="1U,1L">↖</div><div class="btn" data-k="1U">▲</div><div class="btn" data-k="1U,1R">↗</div>
         <div class="btn" data-k="1L">◀</div><div class="btn" data-k="1C">●</div><div class="btn" data-k="1R">▶</div>
-        <div></div><div class="btn" data-k="1D">▼</div><div></div>
+        <div class="btn" data-k="1D,1L">↙</div><div class="btn" data-k="1D">▼</div><div class="btn" data-k="1D,1R">↘</div>
       </div>
       <div style="display:flex;flex-direction:column;align-items:center;gap:6px">
         <div style="display:flex;gap:8px">
@@ -76,6 +82,7 @@ small.tip{color:var(--dim);font-size:11px;max-width:330px;line-height:1.45}
       </div>
     </div>
   </div>
+  <div class="soundrow"><button id="sound" type="button" aria-pressed="true">SOUND ON</button><span id="audio-status">Tap a control to enable audio</span></div>
 </div>
 <script>
 "use strict";
@@ -110,24 +117,21 @@ const START_D=[["sorceress",8,4],["dragon",8,5],["shapeshifter",8,3],["basilisk"
  ["troll",8,1],["troll",8,7],["banshee",8,0],["banshee",8,8],["manticore",7,0],["manticore",7,8],
  ["goblin",7,1],["goblin",7,2],["goblin",7,3],["goblin",7,4],["goblin",7,5],["goblin",7,6],["goblin",7,7]];
 const SPELLS=[
- {k:"teleport",n:"Teleport",d:"Move a friendly icon to an empty square."},
+ {k:"teleport",n:"Teleport",d:"Teleport a friendly icon; an enemy destination starts combat."},
  {k:"heal",n:"Heal",d:"Fully heal a friendly icon."},
  {k:"shift",n:"Shift Time",d:"Reverse the luminance cycle."},
- {k:"exchange",n:"Exchange",d:"Swap two friendly icons."},
+ {k:"exchange",n:"Exchange",d:"Swap any two icons, except imprisoned icons or power-point occupants."},
  {k:"summon",n:"Summon Elemental",d:"An elemental fights an enemy icon."},
  {k:"revive",n:"Revive",d:"Return a fallen icon beside your spellcaster."},
  {k:"imprison",n:"Imprison",d:"Freeze an enemy icon in place."}
 ];
+// The original board's oscillating cross and diagonal arms (manual, page 2).
+const C64_CYCLE=["#ffffff","#7dc9ca","#70a44f","#8e44ad","#40318d","#000000"];
 function tileKind(x,y){
   if(x===0&&y===4)return "L";
   if(x===8&&y===4)return "D";
-  if(x===4||y===4)return "O";
-  const tx=x<4?x:8-x, ty=y<4?y:8-y;
-  // four oscillating squares per quadrant, drawn from two templates so that
-  // equal numbers of light and dark squares oscillate and neither side gains ground
-  const tpl=((x<4)===(y<4))?[[1,2],[2,1],[3,3]]:[[1,1],[2,2],[3,0]];
-  if(tpl.some(t=>t[0]===tx&&t[1]===ty))return "O";
-  return (x+y)%2===0?"L":"D";
+  if(x===4||y===4||Math.abs(x-4)+Math.abs(y-4)===5)return "O";
+  return (x+y)%2===0?"D":"L";
 }
 const KIND=[...Array(N)].map((_,x)=>[...Array(N)].map((_,y)=>tileKind(x,y)));
 
@@ -234,6 +238,58 @@ function drawIcon(c,type,cx,cy,size,ink,bg){
   c.restore();
 }
 
+/* ============ synthesized C64-style sound ============ */
+const SOUND={ctx:null,master:null,enabled:true,voices:new Set(),lastHit:-1};
+function audioLabel(){
+  document.getElementById("sound").textContent=SOUND.enabled?"SOUND ON":"SOUND OFF";
+  document.getElementById("sound").setAttribute("aria-pressed",String(SOUND.enabled));
+  document.getElementById("audio-status").textContent=!SOUND.enabled?"Muted":
+    SOUND.ctx?.state==="running"?"High bell: Light ready · Low bell: Dark ready":"Tap a control to enable audio";
+}
+function unlockAudio(){
+  if(!SOUND.enabled)return;
+  try{
+    if(!SOUND.ctx){const Audio=window.AudioContext||window.webkitAudioContext;if(!Audio)return;
+      SOUND.ctx=new Audio(); SOUND.master=SOUND.ctx.createGain();
+      SOUND.master.gain.value=0.18; SOUND.master.connect(SOUND.ctx.destination);
+      SOUND.ctx.onstatechange=audioLabel;}
+    if(SOUND.ctx.state!=="running")SOUND.ctx.resume().then(audioLabel).catch(()=>{});
+    audioLabel();
+  }catch(e){document.getElementById("audio-status").textContent="Audio unavailable";}
+}
+function tone(hz,endHz,seconds,type="square",level=.3){
+  const a=SOUND.ctx;if(!SOUND.enabled||!a||a.state!=="running"||document.hidden)return;
+  // Three simultaneous voices keep the effects spare, like the C64's SID.
+  if(SOUND.voices.size>=3){const v=SOUND.voices.values().next().value;v.stop();SOUND.voices.delete(v);}
+  const o=a.createOscillator(),g=a.createGain(),t=a.currentTime;
+  o.type=type;o.frequency.setValueAtTime(hz,t);o.frequency.exponentialRampToValueAtTime(Math.max(20,endHz),t+seconds);
+  g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(level,t+.004);
+  g.gain.exponentialRampToValueAtTime(.001,t+seconds);
+  o.connect(g);g.connect(SOUND.master);o.start(t);o.stop(t+seconds+.015);SOUND.voices.add(o);
+  o.onended=()=>{SOUND.voices.delete(o);o.disconnect();g.disconnect();};
+}
+function readySound(side){tone(side==="L"?1320:660,side==="L"?1310:650,.16,"triangle",.65);}
+function attackSound(f){
+  const voice={wizard:[600,95,.20,"sawtooth"],sorceress:[1800,250,.12,"square"],
+    unicorn:[1500,700,.10,"square"],basilisk:[1300,160,.13,"sawtooth"],
+    golem:[100,35,.25,"triangle"],troll:[85,30,.25,"triangle"],
+    archer:[850,150,.09,"triangle"],valkyrie:[550,130,.16,"square"],
+    manticore:[320,80,.15,"square"],dragon:[130,45,.40,"sawtooth"],
+    djinni:[380,90,.25,"sawtooth"],phoenix:[110,1600,.45,"sawtooth"],
+    banshee:[1800,350,.50,"sawtooth"],knight:[700,90,.07,"square"],goblin:[180,45,.08,"square"]};
+  tone(...(voice[f.icon]||[800,120,.14,"square"]));
+}
+function hitSound(){const t=SOUND.ctx?.currentTime??0;if(t-SOUND.lastHit<.08)return;SOUND.lastHit=t;tone(95,30,.08,"sawtooth",.45);}
+function clearKeys(){for(const k of Object.keys(keys))delete keys[k];document.querySelectorAll(".btn.on").forEach(el=>el.classList.remove("on"));}
+addEventListener("blur",clearKeys);
+document.addEventListener("visibilitychange",()=>{if(document.hidden){clearKeys();if(SOUND.master)SOUND.master.gain.value=0;}else if(SOUND.master)SOUND.master.gain.value=SOUND.enabled?.18:0;});
+document.addEventListener("pointerdown",unlockAudio,{capture:true});
+document.addEventListener("keydown",unlockAudio,{capture:true});
+document.getElementById("sound").addEventListener("click",()=>{
+  SOUND.enabled=!SOUND.enabled;if(SOUND.master)SOUND.master.gain.value=SOUND.enabled?.18:0;
+  if(SOUND.enabled){unlockAudio();readySound("L");}audioLabel();
+});
+
 /* ============ state ============ */
 const G={mode:"pvc",human:{L:true,D:false},phase:"menu",turnPhase:"select",
   grid:null,turn:"L",lum:3,lumDir:1,cursor:{x:0,y:4},sel:null,moves:[],
@@ -246,7 +302,7 @@ const statusEl=document.getElementById("status"), ov=document.getElementById("ov
 const maxHP=t=>26+TYPES[t].L*14;
 function mk(t,side){return{id:G.uid++,t,side,hp:maxHP(t),imprisoned:false};}
 function tileColor(x,y){const k=KIND[x][y]; if(k!=="O")return k;
-  return G.lum<=2?"L":(G.lum>=4?"D":"N");}
+  return G.lum<=2?"L":"D";}
 function pieces(side){const a=[];for(let x=0;x<N;x++)for(let y=0;y<N;y++){
   const p=G.grid[x][y]; if(p&&p.side===side)a.push({p,x,y});} return a;}
 function spellcaster(side){const t=side==="L"?"wizard":"sorceress";
@@ -261,7 +317,7 @@ function newGame(){
   START_D.forEach(([t,x,y])=>G.grid[x][y]=mk(t,"D"));
   Object.assign(G,{turn:"L",lum:3,lumDir:1,sel:null,moves:[],spells:{L:{},D:{}},
     dead:{L:[],D:[]},target:null,anim:null,combat:null,over:null,round:1,quiet:0,phase:"play"});
-  G.lumDir=Math.random()<0.5?1:-1;
+  clearKeys();
   hideOverlay(); document.getElementById("pad2").style.display="none";
   beginTurn();
 }
@@ -301,12 +357,12 @@ function beginTurn(){
   for(const {p,x,y} of pieces(side)){          // regeneration
     const c=tileColor(x,y);
     if(isPower(x,y))p.hp=Math.min(maxHP(p.t),p.hp+7);
-    else if(c===p.side)p.hp=Math.min(maxHP(p.t),p.hp+3);
-    if(p.imprisoned&&c===p.side)p.imprisoned=false;
+    else p.hp=Math.min(maxHP(p.t),p.hp+3);
+    if(p.imprisoned&&((p.side==="L"&&G.lum===0)||(p.side==="D"&&G.lum===5)))p.imprisoned=false;
   }
   const w=checkWin(); if(w!==null){gameOver(w);return;}
   const movable=pieces(side).some(({x,y})=>legalMoves(x,y).length);
-  if(!movable&&!(spellcaster(side)&&hasSpell(side))){gameOver(opp(side));return;}
+  if(!movable&&!(spellcaster(side)&&!spellcaster(side).p.imprisoned&&hasSpell(side))){gameOver(opp(side));return;}
   const sc=spellcaster(side), any=pieces(side)[0];
   G.cursor=sc?{x:sc.x,y:sc.y}:(any?{x:any.x,y:any.y}:{x:4,y:4});
   G.sel=null;G.moves=[];G.target=null;
@@ -322,7 +378,7 @@ function completeTurn(msg){
   const w=checkWin(); if(w!==null){gameOver(w);return;}
   if(G.turn==="D"){                    // luminance advances one step per full round
     G.lum+=G.lumDir;
-    if(G.lum>=6){G.lum=6;G.lumDir=-1;} else if(G.lum<=0){G.lum=0;G.lumDir=1;}
+    if(G.lum>=5){G.lum=5;G.lumDir=-1;} else if(G.lum<=0){G.lum=0;G.lumDir=1;}
     G.round++;
   }
   G.turn=opp(G.turn);
@@ -360,99 +416,161 @@ function arrive(){
 }
 
 /* ============ combat arena ============ */
-const AW=340, AH=230;
-const BARRIERS=[[AW/2-9,42,18,44],[AW/2-9,AH-86,18,44],[70,AH/2-9,44,18],
-                [AW-114,AH/2-9,44,18],[AW/2-22,AH/2-22,44,44]];
+const AW=320, AH=192;
+// Small rosettes on a staggered grid, rather than a permanent central wall.
+// Layout and cycle timing are reconstructions; no original machine code is used.
+function makeBarriers(x,y){
+  let seed=(x+1)*743+(y+1)*1597;
+  const rand=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
+  const cells=[];
+  for(let row=0;row<5;row++)for(let col=0;col<8;col++){
+    const bx=22+col*38,by=16+row*38;
+    if((col<2||col>5)&&Math.abs(by-AH/2)<30)continue;
+    cells.push({x:bx,y:by,w:10,h:12,phase:rand()});
+  }
+  for(let i=cells.length-1;i>0;i--){const j=Math.floor(rand()*(i+1));[cells[i],cells[j]]=[cells[j],cells[i]];}
+  return cells.slice(0,14);
+}
 function startCombat(att,def,x,y){
-  const bg=tileColor(x,y);
+  const bg=tileColor(x,y),lum=KIND[x][y]==="L"?0:KIND[x][y]==="D"?5:G.lum;
   const mkF=p=>{const T=TYPES[p.t];
     return {p,t:p.t,side:p.side,F:T.F,S:T.S,I:T.I,atk:T.atk,sp:T.sp,name:T.n,icon:p.t,
       x:0,y:0,fx:1,fy:0,hp:0,max:0,cd:0,inv:0,flash:0,swing:0};};
-  const a=mkF(att), b=mkF(def);
-  const morph=(m,o)=>{ if(m.t!=="shapeshifter")return;   // takes its foe's shape and abilities
-    m.F=o.F;m.S=o.S;m.I=o.I;m.atk=o.atk;m.sp=o.sp;m.icon=o.icon;m.name="Shapeshifter";
-    m.lifeAs=o.t;};
-  morph(a,b); morph(b,a);
-  [a,b].forEach(f=>{
-    const base=f.lifeAs||f.p.t;                 // shapeshifter mirrors its foe's lifespan
-    let hp=maxHP(base)*((f.p.hp>0?f.p.hp:maxHP(f.p.t))/maxHP(f.p.t));
-    if(bg===f.side)hp*=1.25; else if(bg!=="N")hp*=0.85;
-    f.hp=Math.round(hp); f.max=Math.round(maxHP(base)*1.25);
-    f.dmg=(3+f.F*2.3)*(bg===f.side?1.15:1);
-    f.pspd=70+f.S*26; f.rate=(1500-f.I*190)*(1-(f.S-3)*0.05);
-    f.speed=(f.sp==="slow"?46:78);
-  });
-  const lightF=a.side==="L"?a:b, darkF=a.side==="L"?b:a;
-  lightF.x=40; lightF.y=AH/2; lightF.fx=1;
-  darkF.x=AW-40; darkF.y=AH/2; darkF.fx=-1;
-  G.combat={a,b,bg,x,y,shots:[],t0:performance.now(),barrier:0,over:0,p1:lightF,p2:darkF};
-  G.phase="combat"; G.turnPhase="combat";
-  document.getElementById("pad2").style.display=(G.mode==="pvp")?"flex":"none";
+  const a=mkF(att),b=mkF(def);
+  const morph=(m,o)=>{if(m.t!=="shapeshifter")return;
+    m.F=o.F;m.S=o.S;m.I=o.I;m.atk=o.atk;m.sp=o.sp;m.icon=o.icon;m.lifeAs=o.t;};
+  morph(a,b);morph(b,a);
+  for(const f of [a,b]){
+    const base=f.lifeAs||f.p.t;
+    f.healthScale=maxHP(base)/maxHP(f.p.t)*(.65+.70*(f.side==="L"?1-lum/5:lum/5));
+    f.hp=f.p.hp*f.healthScale;f.max=maxHP(base)*1.35;
+    f.dmg=3+f.F*2.3; // The square changes lifespan, not weapon damage.
+    f.pspd=70+f.S*26;
+    f.rate=f.I>=6?350:f.I>=5?650:f.I>=3?1000:2000;
+    f.speed=f.sp==="slow"?42:70;
+  }
+  const lightF=a.side==="L"?a:b,darkF=a.side==="L"?b:a;
+  lightF.x=24;lightF.y=AH/2;lightF.fx=1;
+  darkF.x=AW-24;darkF.y=AH/2;darkF.fx=-1;
+  clearKeys();
+  G.combat={a,b,bg,lum,x,y,shots:[],barriers:makeBarriers(x,y),t0:performance.now(),time:0,over:0,p1:lightF,p2:darkF};
+  G.phase="combat";G.turnPhase="combat";
+  document.getElementById("pad2").style.display=G.mode==="pvp"?"flex":"none";
+  tone(220,880,.25,"triangle",.4);
 }
-const barrierOn=()=>G.combat.barrier<0.66;
-function blocked(x,y){ if(!barrierOn())return false;
-  return BARRIERS.some(([bx,by,bw,bh])=>x>bx-6&&x<bx+bw+6&&y>by-6&&y<by+bh+6);}
-function hurt(f,d){ if(f.inv>0)return; f.hp-=d*(0.85+Math.random()*0.3); f.flash=140; }
+function barrierState(b,c=G.combat){
+  // The barrier's own six-colour cycle is independent of the strategic clock.
+  const phase=(c.time/12+b.phase)%1;
+  const level=Math.min(5,Math.floor((phase<.5?phase:1-phase)*12));
+  const difference=Math.abs(level-c.lum);
+  return {level,solid:difference>=3,factor:difference===0?1:difference===1?.62:difference===2?.32:0};
+}
+function barrierFactor(x,y,r=0){
+  let factor=1;
+  for(const b of G.combat.barriers){
+    if(x+r>b.x&&x-r<b.x+b.w&&y+r>b.y&&y-r<b.y+b.h)
+      factor=Math.min(factor,barrierState(b).factor);
+  }
+  return factor;
+}
+function blocked(x,y,r=8){return barrierFactor(x,y,r)===0;}
+function ejectFromBarrier(f,b){
+  const options=[[b.x-8,f.y],[b.x+b.w+8,f.y],[f.x,b.y-8],[f.x,b.y+b.h+8]]
+    .filter(([x,y])=>x>=10&&x<=AW-10&&y>=10&&y<=AH-10&&!blocked(x,y));
+  options.sort((a,z)=>Math.hypot(a[0]-f.x,a[1]-f.y)-Math.hypot(z[0]-f.x,z[1]-f.y));
+  if(options.length)[f.x,f.y]=options[0];
+}
+function moveFighter(f,dx,dy){
+  const factor=barrierFactor(f.x,f.y,8);
+  const speed=factor;
+  const nx=Math.max(10,Math.min(AW-10,f.x+dx*speed));
+  const ny=Math.max(10,Math.min(AH-10,f.y+dy*speed));
+  if(!blocked(nx,f.y))f.x=nx;
+  if(!blocked(f.x,ny))f.y=ny;
+}
+function hurt(f,d){if(f.icon==="phoenix"&&f.swing>0)return;f.hp-=d;f.flash=100;hitSound();}
 function doAttack(f,e,q){
-  const c=G.combat; f.cd=f.rate;
-  if(f.atk==="melee"){ f.swing=180;
-    if(Math.hypot(e.x-f.x,e.y-f.y)<30&&(f.fx*(e.x-f.x)+f.fy*(e.y-f.y))>-6)q.push({t:e,d:f.dmg*1.5});
-  } else if(f.atk==="burst"){ f.swing=300; f.inv=Math.max(f.inv,180);  // shields while it burns
-    if(Math.hypot(e.x-f.x,e.y-f.y)<30)q.push({t:e,d:f.dmg});
-  } else c.shots.push({x:f.x+f.fx*14,y:f.y+f.fy*14,vx:f.fx*f.pspd,vy:f.fy*f.pspd,
-      dmg:f.dmg,owner:f,life:3.2,side:f.side});
+  const c=G.combat;
+  if(f.atk==="missile"&&c.shots.some(s=>s.owner===f&&!s.dead))return;
+  f.cd=f.rate;attackSound(f);
+  if(f.atk==="melee"){
+    f.swing=160;
+    const dx=e.x-f.x,dy=e.y-f.y;
+    if(Math.hypot(dx,dy)<25&&(f.fx*dx+f.fy*dy)>0)q.push({t:e,d:f.dmg});
+  }else if(f.atk==="burst")f.swing=f.icon==="phoenix"?850:1000;
+  else c.shots.push({x:f.x+f.fx*12,y:f.y+f.fy*12,vx:f.fx*f.pspd,vy:f.fy*f.pspd,
+      dmg:f.dmg,owner:f,side:f.side,dead:false});
 }
 function aiInput(f,e,elapsed){
-  const dx=e.x-f.x, dy=e.y-f.y, d=Math.hypot(dx,dy)||1;
-  const want=f.atk==="melee"?20:(f.atk==="burst"?26:Math.min(150,60+f.S*14));
-  let ix=0,iy=0;
-  if(Math.abs(dx)>Math.abs(dy)){ if(Math.abs(dy)>10)iy=Math.sign(dy); else ix=Math.sign(dx)*(d>want?1:-1); }
-  else { if(Math.abs(dx)>10)ix=Math.sign(dx); else iy=Math.sign(dy)*(d>want?1:-1); }
-  if(f.aiT===undefined||elapsed>f.aiT){f.aiJ=Math.random()<0.25;f.aiT=elapsed+0.5+Math.random();}
-  if(f.aiJ){ if(ix===0)ix=Math.random()<.5?1:-1; else iy=Math.random()<.5?1:-1; }
-  let fire=(f.atk==="melee"||f.atk==="burst")?d<34:((Math.abs(dx)<14||Math.abs(dy)<14)&&d<200);
-  if(fire){ if(Math.abs(dx)>=Math.abs(dy)){ix=Math.sign(dx);iy=0;} else {iy=Math.sign(dy);ix=0;} }
-  return [ix,iy,fire];
+  const dx=e.x-f.x,dy=e.y-f.y,d=Math.hypot(dx,dy)||1;
+  const aimX=Math.abs(dx)<8?0:Math.sign(dx),aimY=Math.abs(dy)<8?0:Math.sign(dy);
+  const aligned=Math.abs(dx)<10||Math.abs(dy)<10||Math.abs(Math.abs(dx)-Math.abs(dy))<12;
+  const close=f.atk==="melee"?d<24:f.atk==="burst"?d<34:aligned;
+  const busy=f.atk==="missile"&&G.combat.shots.some(s=>s.owner===f);
+  if(close&&f.cd<=0&&!busy)return [aimX,aimY,true];
+  let ix=aimX,iy=aimY;
+  if(f.atk==="missile"){
+    if(d<90){ix=-aimX;iy=-aimY;}
+    else if(d<170){if(Math.abs(dx)>Math.abs(dy)){ix=0;iy=aimY;}else{ix=aimX;iy=0;}}
+    const shot=G.combat.shots.find(s=>s.side!==f.side&&Math.hypot(s.x-f.x,s.y-f.y)<65);
+    if(shot){ix=-Math.sign(shot.vy);iy=Math.sign(shot.vx);}
+  }
+  if(blocked(f.x+ix*14,f.y+iy*14)){
+    const sign=(Math.floor(elapsed/2)%2)?1:-1;
+    const candidates=[[iy*sign,-ix*sign],[0,sign],[sign,0],[-sign,0],[0,-sign]];
+    const step=candidates.find(([x,y])=>!blocked(f.x+x*14,f.y+y*14)&&f.x+x*14>10&&f.x+x*14<AW-10&&f.y+y*14>10&&f.y+y*14<AH-10);
+    if(step)[ix,iy]=step;
+  }
+  return [ix,iy,false];
 }
 function combatStep(dt,now){
   const c=G.combat;
-  if(c.over){ if(now>c.over)finishCombat(); return; }
-  c.barrier=(c.barrier+dt*0.22)%1;
-  const elapsed=(now-c.t0)/1000;
-  const pair=[c.a,c.b];
-  const snap=pair.map(f=>({x:f.x,y:f.y}));          // both read the same frame
-  const cmd=pair.map((f,i)=>{
-    const e=snap[1-i];
-    if(isCPU(f.side))return aiInput(f,e,elapsed);
-    if(G.mode!=="pvp"||f===c.p1)return [(keys["1R"]?1:0)-(keys["1L"]?1:0),
-                        (keys["1D"]?1:0)-(keys["1U"]?1:0), !!(keys["1A"]||keys["1C"])];
-    return [(keys["2R"]?1:0)-(keys["2L"]?1:0),
-            (keys["2D"]?1:0)-(keys["2U"]?1:0), !!keys["2A"]];
-  });
-  pair.forEach((f,i)=>{                              // movement first, for both
-    const [ix,iy]=cmd[i];
-    const rooted=(f.atk==="burst"&&f.swing>0);      // cannot move while flaring
-    if((ix||iy)&&!rooted){const m=Math.hypot(ix,iy); f.fx=ix/m; f.fy=iy/m;
-      const nx=f.x+f.fx*f.speed*dt, ny=f.y+f.fy*f.speed*dt;
-      if(!blocked(nx,f.y))f.x=nx; if(!blocked(f.x,ny))f.y=ny;
-      f.x=Math.max(14,Math.min(AW-14,f.x)); f.y=Math.max(14,Math.min(AH-14,f.y));
+  if(c.over&&now>c.over&&!c.shots.length&&c.a.swing<=0&&c.b.swing<=0){finishCombat();return;}
+  c.time+=dt;
+  for(const b of c.barriers){
+    const solid=barrierState(b).solid;
+    if(solid&&!b.wasSolid)for(const f of [c.a,c.b]){
+      if(f.x+8>b.x&&f.x-8<b.x+b.w&&f.y+8>b.y&&f.y-8<b.y+b.h)ejectFromBarrier(f,b);
     }
-    f.cd-=dt*1000; f.inv-=dt*1000; f.flash-=dt*1000; f.swing-=dt*1000;
+    b.wasSolid=solid;
+  }
+  const pair=[c.a,c.b],snap=pair.map(f=>({x:f.x,y:f.y}));
+  const cmd=pair.map((f,i)=>{
+    if(isCPU(f.side))return aiInput(f,snap[1-i],c.time);
+    const prefix=G.mode!=="pvp"||f===c.p1?"1":"2";
+    return [(keys[prefix+"R"]?1:0)-(keys[prefix+"L"]?1:0),
+      (keys[prefix+"D"]?1:0)-(keys[prefix+"U"]?1:0),!!(keys[prefix+"A"]||(prefix==="1"&&keys["1C"]))];
   });
-  const invBefore=pair.map(f=>f.inv);   // a shield raised this frame cannot block the counterblow
+  pair.forEach((f,i)=>{
+    const [ix,iy,fire]=cmd[i];
+    if(ix||iy){const m=Math.hypot(ix,iy);f.fx=ix/m;f.fy=iy/m;}
+    const rooted=fire||(f.icon==="phoenix"&&f.swing>0);
+    if(f.hp>0&&(ix||iy)&&!rooted)moveFighter(f,f.fx*f.speed*dt,f.fy*f.speed*dt);
+    const prev=f.cd;f.cd=Math.max(0,f.cd-dt*1000);
+    if(prev>0&&f.cd===0&&!fire&&!c.over)readySound(f.side);
+    f.flash=Math.max(0,f.flash-dt*1000);f.swing=Math.max(0,f.swing-dt*1000);
+  });
   const dmgQ=[];
-  pair.forEach((f,i)=>{ if(cmd[i][2]&&f.cd<=0)doAttack(f,pair[1-i],dmgQ); });
-  dmgQ.forEach(ev=>{ const i=pair.indexOf(ev.t);
-    if(invBefore[i]>0)return; ev.t.hp-=ev.d*(0.85+Math.random()*0.3); ev.t.flash=140; });
+  pair.forEach((f,i)=>{if(!c.over&&f.hp>0&&cmd[i][2]&&f.cd<=0)doAttack(f,pair[1-i],dmgQ);});
+  // Phoenix and Banshee attacks hurt throughout the time spent in their area.
+  pair.forEach((f,i)=>{if(f.hp>0&&f.atk==="burst"&&f.swing>0&&Math.hypot(f.x-pair[1-i].x,f.y-pair[1-i].y)<34)
+    dmgQ.push({t:pair[1-i],d:f.dmg*dt*3});});
+  dmgQ.forEach(ev=>hurt(ev.t,ev.d));
   for(const s of c.shots){
-    s.x+=s.vx*dt; s.y+=s.vy*dt; s.life-=dt;
-    if(s.x<4||s.x>AW-4||s.y<4||s.y>AH-4||s.life<=0||blocked(s.x,s.y)){s.dead=true;continue;}
-    const e=s.owner===c.a?c.b:c.a;
-    if(Math.hypot(s.x-e.x,s.y-e.y)<15){s.dead=true;hurt(e,s.dmg);}
+    // Substeps prevent fast bolts from tunnelling through narrow obstacles.
+    const steps=Math.max(1,Math.ceil(Math.hypot(s.vx,s.vy)*dt/3));
+    for(let i=0;i<steps&&!s.dead;i++){
+      const factor=barrierFactor(s.x,s.y,2);
+      if(factor===0){s.dead=true;break;}
+      s.x+=s.vx*dt/steps*factor;s.y+=s.vy*dt/steps*factor;
+      if(s.x<0||s.x>AW||s.y<0||s.y>AH||blocked(s.x,s.y,2)){s.dead=true;break;}
+      const e=s.owner===c.a?c.b:c.a;
+      if(Math.hypot(s.x-e.x,s.y-e.y)<11){s.dead=true;hurt(e,s.dmg);}
+    }
   }
   c.shots=c.shots.filter(s=>!s.dead);
-  if(elapsed>50){c.a.hp-=dt*6;c.b.hp-=dt*6;}
-  if(c.a.hp<=0||c.b.hp<=0)c.over=now+900;
+  // No invented sudden-death timer: a duel ends when an icon is defeated.
+  if(!c.over&&(c.a.hp<=0||c.b.hp<=0)){c.over=now+900;clearKeys();tone(300,35,.6,"sawtooth",.4);}
 }
 function finishCombat(){
   const c=G.combat, {x,y}=c, att=c.a.p, def=c.b.p;
@@ -460,12 +578,12 @@ function finishCombat(){
   document.getElementById("pad2").style.display="none";
   let msg;
   if(aAlive&&!bAlive){
-    att.hp=Math.max(6,Math.round(c.a.hp));
+    att.hp=Math.min(maxHP(att.t),Math.max(1,c.a.hp/c.a.healthScale));
     G.grid[x][y]=(att.t==="elemental")?null:att;     // the elemental departs after its fight
     G.dead[def.side].push(def.t);
     msg=TYPES[att.t].n+" defeats "+TYPES[def.t].n+" on "+sqName(x,y)+".";
   } else if(bAlive&&!aAlive){
-    def.hp=Math.max(6,Math.round(c.b.hp)); G.grid[x][y]=def;
+    def.hp=Math.min(maxHP(def.t),Math.max(1,c.b.hp/c.b.healthScale)); G.grid[x][y]=def;
     if(att.t!=="elemental")G.dead[att.side].push(att.t);
     msg=TYPES[def.t].n+" holds "+sqName(x,y)+".";
   } else {
@@ -482,6 +600,7 @@ function openSpells(){
   if(G.phase!=="play"||G.turnPhase!=="select"||!G.human[G.turn])return;
   const side=G.turn;
   if(!spellcaster(side)){G.msg="Your spellcaster has fallen — no magic remains.";return;}
+  if(spellcaster(side).p.imprisoned){G.msg="An imprisoned mage cannot cast spells.";return;}
   showOverlay(`<h1>SPELLS</h1><p class="sub">Each may be cast once per game. Casting uses your turn.</p>
    <div class="spellgrid">${SPELLS.map((s,i)=>
      `<div class="menuitem ${G.spells[side][s.k]?"used":""} ${i===0?"sel":""}" data-spell="${s.k}">
@@ -494,7 +613,7 @@ function castSpell(k){
   if(k==="cancel"||G.spells[side][k]){hideOverlay();G.turnPhase="select";return;}
   hideOverlay(); G.turnPhase="select";
   if(k==="shift"){G.spells[side].shift=true;
-    if(G.lum>=6||G.lum<=0)G.lum=G.lum>=6?0:6; else G.lumDir*=-1;
+    if(G.lum>=5||G.lum<=0){G.lum=G.lum>=5?0:5;G.lumDir=G.lum===0?1:-1;} else G.lumDir*=-1;
     completeTurn("Time shifts — the luminance cycle reverses."); return;}
   if(k==="revive"){
     const list=[...new Set(G.dead[side])];
@@ -508,9 +627,9 @@ function castSpell(k){
 }
 function targetPrompt(){
   const t=G.target; if(!t)return "";
-  const m={teleport:["Select a friendly icon.","Select an empty square."],
+  const m={teleport:["Select a friendly icon.","Select an empty square or an enemy icon."],
     heal:["Select a friendly icon to heal.",""],
-    exchange:["Select the first friendly icon.","Select the second friendly icon."],
+    exchange:["Select the first icon.","Select the second icon."],
     summon:["Select an enemy icon to face the elemental.",""],
     imprison:["Select an enemy icon to imprison.",""],
     revive:["","Select an empty square beside your spellcaster."]};
@@ -528,7 +647,7 @@ function spellTarget(x,y){
     case "imprison":
       if(!p||p.side===side)return bad("Must be an enemy icon.");
       if(spellImmune(x,y,side))return bad("Power points ward off spells.");
-      if(tileColor(x,y)===p.side)return bad("It would break free at once.");
+      if((p.side==="L"&&G.lum===0)||(p.side==="D"&&G.lum===5))return bad("It would break free at once.");
       p.imprisoned=true; return done(TYPES[p.t].n+" is bound in place.");
     case "summon":
       if(!p||p.side===side)return bad("Must be an enemy icon.");
@@ -537,13 +656,14 @@ function spellTarget(x,y){
       startCombat(mk("elemental",side),p,x,y); return;
     case "teleport":
       if(t.step===1){ if(!p||p.side!==side)return bad("Must be a friendly icon.");
-        if(p.imprisoned)return bad("It is imprisoned.");
+        if(p.imprisoned||isPower(x,y))return bad("Cannot teleport an imprisoned icon or a power-point occupant.");
         t.first=[x,y]; t.step=2; G.msg=targetPrompt(); return; }
-      if(p||isPower(x,y))return bad("Must be an empty, non-power square.");
-      G.grid[x][y]=G.grid[t.first[0]][t.first[1]]; G.grid[t.first[0]][t.first[1]]=null;
-      return done("The icon vanishes and reappears on "+sqName(x,y)+".");
+      if(p?.side===side||(p&&isPower(x,y)))return bad("Cannot target a friendly icon or a protected enemy.");
+      {const icon=G.grid[t.first[0]][t.first[1]];G.grid[t.first[0]][t.first[1]]=null;
+       if(p){G.spells[side].teleport=true;G.target=null;startCombat(icon,p,x,y);return;}
+       G.grid[x][y]=icon;return done("The icon vanishes and reappears on "+sqName(x,y)+".");}
     case "exchange":
-      if(!p||p.side!==side)return bad("Must be a friendly icon.");
+      if(!p)return bad("Select an occupied square.");
       if(p.imprisoned||isPower(x,y))return bad("Not while imprisoned or on a power point.");
       if(t.step===1){t.first=[x,y];t.step=2;G.msg=targetPrompt();return;}
       {const [ax,ay]=t.first; if(ax===x&&ay===y)return bad("Choose a different icon.");
@@ -560,22 +680,11 @@ function spellTarget(x,y){
 }
 
 /* ============ CPU board play ============ */
-// Measured win rates for every Light/Dark matchup in this combat model, so the
-// CPU's judgement matches what actually happens in the arena rather than a guess.
-const ODDS={
- wizard:{sorceress:1,dragon:0,shapeshifter:0.55,basilisk:1,troll:0.9,banshee:0.32,manticore:1,goblin:0.07},
- djinni:{sorceress:1,dragon:0.02,shapeshifter:0.63,basilisk:1,troll:0.78,banshee:0.07,manticore:1,goblin:0},
- phoenix:{sorceress:1,dragon:1,shapeshifter:0.53,basilisk:0.68,troll:1,banshee:1,manticore:1,goblin:0.73},
- unicorn:{sorceress:1,dragon:0,shapeshifter:0.51,basilisk:1,troll:0.97,banshee:0.23,manticore:0.98,goblin:0.07},
- golem:{sorceress:0.3,dragon:0.13,shapeshifter:0.41,basilisk:0.03,troll:0.5,banshee:0,manticore:0.75,goblin:0},
- valkyrie:{sorceress:0.53,dragon:0,shapeshifter:0.43,basilisk:0.98,troll:0.77,banshee:0.02,manticore:0.98,goblin:0.02},
- archer:{sorceress:0,dragon:0,shapeshifter:0.49,basilisk:0,troll:0.27,banshee:0,manticore:0,goblin:0},
- knight:{sorceress:0.92,dragon:0.98,shapeshifter:0.54,basilisk:0.1,troll:1,banshee:1,manticore:1,goblin:0.47}
-};
-function winOdds(mine,theirs,side){            // probability that `mine` wins
-  const l=side==="L"?mine:theirs, d=side==="L"?theirs:mine;
-  const row=ODDS[l]; const p=(row&&row[d]!==undefined)?row[d]:0.5;
-  return side==="L"?p:1-p;
+// A heuristic, not measured win probabilities; avoids stale odds from the old arena.
+function winOdds(mine,theirs,side){
+  const strength=t=>{const a=TYPES[t];return (3+a.F*2.3)*(a.atk==="melee"?.6:1)*(1+a.I*.12)*maxHP(t);};
+  const a=strength(mine),b=strength(theirs);
+  return a/(a+b);
 }
 const pieceValue=t=>{const T=TYPES[t];return T.F+T.S+T.I+T.L*1.4+((t==="wizard"||t==="sorceress")?22:0);};
 function cpuMove(){
@@ -660,10 +769,12 @@ function press(k){
   }
 }
 function bindKey(el,k){
-  const dn=e=>{e.preventDefault();keys[k]=true;el.classList.add("on");press(k);};
-  const up=e=>{e.preventDefault();keys[k]=false;el.classList.remove("on");};
-  el.addEventListener("pointerdown",dn); el.addEventListener("pointerup",up);
-  el.addEventListener("pointercancel",up); el.addEventListener("pointerleave",up);
+  const parts=k.split(",");
+  const dn=e=>{e.preventDefault();el.setPointerCapture?.(e.pointerId);
+    for(const key of parts){keys[key]=true;press(key);}el.classList.add("on");};
+  const up=e=>{e.preventDefault();for(const key of parts)keys[key]=false;el.classList.remove("on");};
+  el.addEventListener("pointerdown",dn);el.addEventListener("pointerup",up);
+  el.addEventListener("pointercancel",up);el.addEventListener("lostpointercapture",up);
 }
 document.querySelectorAll("[data-k]").forEach(el=>bindKey(el,el.dataset.k));
 const KMAP={ArrowUp:"1U",ArrowDown:"1D",ArrowLeft:"1L",ArrowRight:"1R",Enter:"1A"," ":"1A",
@@ -713,7 +824,7 @@ function mainMenu(){
   <div class="menuitem" data-mode="pvc">1P vs CPU</div>
   <div class="menuitem" data-mode="cvc">CPU vs CPU &nbsp;<span style="opacity:.7">demo</span></div>
   <small class="tip">D-pad moves the cursor · A selects and confirms · B cancels · SPELL opens the seven
-  one-shot spells. In combat A fires along your facing. 1P vs 2P adds a second pad at the top for Dark.
+  one-shot spells. Combat: hold A + a direction to aim and fire; release A to move. High bell = Light ready, low bell = Dark ready. 1P vs 2P adds a second pad at the top for Dark.
   Keyboard: arrows + Z/X, and WASD + Shift for player two.</small>`);
 }
 
@@ -721,29 +832,18 @@ function mainMenu(){
 function fit(){const r=cv.getBoundingClientRect(), d=Math.min(devicePixelRatio||1,2.5);
   cv.width=Math.round(r.width*d); cv.height=Math.round(r.height*d);}
 addEventListener("resize",fit);
-function sqColour(x,y){
-  const k=KIND[x][y];
-  if(k==="L")return "#e6dfc8"; if(k==="D")return "#33304a";
-  const t=G.lum/6, a=[230,223,200], b=[51,48,74];
-  const c=a.map((v,i)=>Math.round(v+(b[i]-v)*t));
-  return `rgb(${c[0]},${c[1]},${c[2]})`;
-}
-const DISC={L:"#f6f1de",D:"#1d1733"}, INK={L:"#2b2417",D:"#cdbdff"};
-function drawPiece(p,cx,cy,s){
-  ctx.beginPath(); ctx.arc(cx,cy,s*.42,0,7);
-  ctx.fillStyle=DISC[p.side]; ctx.fill();
-  ctx.lineWidth=s*.045; ctx.strokeStyle=p.side==="L"?"#b3a67c":"#7d6ecf"; ctx.stroke();
-  drawIcon(ctx,p.t,cx,cy,s*.68,INK[p.side],DISC[p.side]);
-}
+function sqColour(x,y){const k=KIND[x][y];return k==="L"?"#ffffff":k==="D"?"#000000":C64_CYCLE[G.lum];}
+const DISC={L:"#000000",D:"#ffffff"},INK={L:"#d5df7c",D:"#8878d8"};
+function drawPiece(p,cx,cy,s){drawIcon(ctx,p.t,cx,cy,s*.85,INK[p.side],DISC[p.side]);}
+
 function drawBoard(){
   const W=cv.width, s=W/N;
   ctx.clearRect(0,0,cv.width,cv.height);
   for(let x=0;x<N;x++)for(let y=0;y<N;y++){
     ctx.fillStyle=sqColour(x,y); ctx.fillRect(x*s,y*s,s+.6,s+.6);
-    if(isPower(x,y)){ctx.strokeStyle="rgba(216,180,90,.95)";ctx.lineWidth=s*.07;
+    if(isPower(x,y)){ctx.strokeStyle=Math.floor(performance.now()/350)%2?"#b84141":"#ffffff";ctx.lineWidth=s*.07;
       ctx.beginPath();ctx.arc(x*s+s/2,y*s+s/2,s*.38,0,7);ctx.stroke();}
-    if(KIND[x][y]==="O"){ctx.fillStyle="rgba(128,128,150,.3)";
-      ctx.fillRect(x*s+s*.44,y*s+s*.06,s*.12,s*.07);}
+
   }
   if(!G.grid)return;
   for(const [mx,my] of G.moves){
@@ -790,38 +890,45 @@ function drawBoard(){
   }
 }
 function drawArena(){
-  const c=G.combat, W=cv.width, H=cv.height;
-  const sc=Math.min(W/AW,H/AH), ox=(W-AW*sc)/2, oy=(H-AH*sc)/2;
-  ctx.fillStyle=c.bg==="L"?"#ded6bd":(c.bg==="D"?"#2a2740":"#7b7690"); ctx.fillRect(0,0,W,H);
-  ctx.save(); ctx.translate(ox,oy); ctx.scale(sc,sc);
-  ctx.fillStyle=c.bg==="L"?"#e9e2cc":(c.bg==="D"?"#322e4c":"#8b8699"); ctx.fillRect(0,0,AW,AH);
-  if(barrierOn()){ctx.fillStyle=c.bg==="L"?"rgba(60,55,90,.85)":"rgba(230,222,200,.85)";
-    for(const [bx,by,bw,bh] of BARRIERS)ctx.fillRect(bx,by,bw,bh);}
-  for(const s of c.shots){ctx.beginPath();ctx.arc(s.x,s.y,4.5,0,7);
-    ctx.fillStyle=s.side==="L"?"#ffe9a8":"#b98cff";ctx.fill();}
+  const c=G.combat,W=cv.width,H=cv.height;
+  const sc=Math.min(W/(AW+22),H/(AH+40)),ox=(W-AW*sc)/2,oy=(H-AH*sc)/2;
+  ctx.fillStyle="#000000";ctx.fillRect(0,0,W,H);
+  ctx.save();ctx.translate(ox,oy);ctx.scale(sc,sc);
+  ctx.fillStyle=C64_CYCLE[c.lum];ctx.fillRect(0,0,AW,AH);
+  for(const b of c.barriers){
+    const state=barrierState(b);if(state.level===c.lum)continue;
+    ctx.fillStyle=C64_CYCLE[state.level];
+    // C64-style rosettes: several tiny obstacles with their own luminosity.
+    ctx.fillRect(b.x+2,b.y,b.w-4,b.h);ctx.fillRect(b.x,b.y+3,b.w,b.h-6);
+    if(state.solid){ctx.fillRect(b.x+2,b.y+2,b.w-4,b.h-4);}
+  }
+  for(const s of c.shots){
+    ctx.strokeStyle=INK[s.side];ctx.fillStyle=INK[s.side];ctx.lineWidth=2;
+    if(s.owner.icon==="golem"||s.owner.icon==="troll")ctx.fillRect(s.x-3,s.y-3,6,6);
+    else{ctx.beginPath();ctx.moveTo(s.x-s.owner.fx*6,s.y-s.owner.fy*6);ctx.lineTo(s.x+s.owner.fx*3,s.y+s.owner.fy*3);ctx.stroke();}
+  }
   for(const f of [c.a,c.b]){
     if(f.hp<=0)continue;
-    if(f.atk==="burst"&&f.swing>0){ctx.beginPath();ctx.arc(f.x,f.y,40,0,7);
-      ctx.fillStyle=f.side==="L"?"rgba(255,206,110,.45)":"rgba(170,110,255,.45)";ctx.fill();}
-    if(f.atk==="melee"&&f.swing>0){ctx.beginPath();
-      ctx.arc(f.x,f.y,26,Math.atan2(f.fy,f.fx)-0.8,Math.atan2(f.fy,f.fx)+0.8);
-      ctx.strokeStyle=f.side==="L"?"#ffe9a8":"#c8a6ff";ctx.lineWidth=5;ctx.stroke();}
-    ctx.globalAlpha=f.flash>0?0.45:1;
-    ctx.beginPath(); ctx.arc(f.x,f.y,17,0,7); ctx.fillStyle=DISC[f.side]; ctx.fill();
-    drawIcon(ctx,f.icon,f.x,f.y,28,INK[f.side],DISC[f.side]);
+    if(f.atk==="burst"&&f.swing>0){
+      ctx.strokeStyle=INK[f.side];ctx.lineWidth=2;
+      for(let r=10;r<=34;r+=8){ctx.beginPath();ctx.arc(f.x,f.y,r,0,Math.PI*2);ctx.stroke();}
+    }
+    if(f.atk==="melee"&&f.swing>0){ctx.strokeStyle=INK[f.side];ctx.lineWidth=3;
+      ctx.beginPath();ctx.moveTo(f.x+f.fx*8,f.y+f.fy*8);ctx.lineTo(f.x+f.fx*24,f.y+f.fy*24);ctx.stroke();}
+    ctx.globalAlpha=f.flash>0?.45:1;
+    if(!(f.icon==="phoenix"&&f.swing>0))drawIcon(ctx,f.icon,Math.round(f.x),Math.round(f.y),22,INK[f.side],C64_CYCLE[c.lum]);
     ctx.globalAlpha=1;
   }
+  for(const [f,x] of [[c.p1,-8],[c.p2,AW+3]]){
+    ctx.fillStyle="#333333";ctx.fillRect(x,0,5,AH);
+    const h=AH*Math.max(0,Math.min(1,f.hp/f.max));ctx.fillStyle=INK[f.side];ctx.fillRect(x,AH-h,5,h);
+  }
+  ctx.font="7px monospace";ctx.textBaseline="bottom";
+  ctx.fillStyle=INK.L;ctx.textAlign="left";ctx.fillText(c.p1.name.toUpperCase(),0,-5);
+  ctx.fillStyle=INK.D;ctx.textAlign="right";ctx.fillText(c.p2.name.toUpperCase(),AW,-5);
+  ctx.fillStyle="#ffffff";ctx.textAlign="center";ctx.textBaseline="top";
+  ctx.fillText("HOLD FIRE + DIRECTION TO AIM · RELEASE TO MOVE",AW/2,AH+8);
   ctx.restore();
-  const bar=(f,left)=>{
-    const w=W*0.38, x=left?W*0.05:W*0.57, y=Math.max(6,oy*0.45), h=Math.max(8,H*0.022);
-    ctx.fillStyle="rgba(0,0,0,.45)"; ctx.fillRect(x,y,w,h);
-    ctx.fillStyle=f.side==="L"?"#f2e7c2":"#a98cff";
-    ctx.fillRect(x,y,w*Math.min(1,Math.max(0,f.hp)/f.max),h);
-    ctx.fillStyle=c.bg==="L"?"#201c14":"#efeaff"; ctx.font=`${Math.max(10,H*0.024)}px sans-serif`;
-    ctx.textAlign=left?"left":"right"; ctx.textBaseline="bottom";
-    ctx.fillText(f.name+(isCPU(f.side)?" (CPU)":""),left?x:x+w,y-2);
-  };
-  bar(c.p1,true); bar(c.p2,false);
 }
 function render(){
   if(G.phase==="combat"&&G.combat)drawArena(); else drawBoard();
@@ -839,7 +946,7 @@ let last=performance.now();
 function loop(now){
   const dt=Math.min(0.05,(now-last)/1000); last=now;
   try{
-    if(G.phase==="combat"&&G.combat)combatStep(dt,now);
+    if(G.phase==="combat"&&G.combat&&!document.hidden)combatStep(dt,now);
     else if(G.phase==="play"){
       if(G.turnPhase==="banner"&&now>G.banner.until){
         G.banner=null; G.turnPhase="select";
@@ -856,3 +963,4 @@ fit(); mainMenu(); requestAnimationFrame(loop);
 </script>
 </body>
 </html>
+
