@@ -679,7 +679,7 @@ cv.addEventListener("pointerdown",e=>{
   G.cursor={x,y}; press("1A");
 });
 ov.addEventListener("click",e=>{
-  const el=e.target.closest("[data-mode],[data-act],[data-spell],[data-revive]"); if(!el)return;
+  const el=e.target.closest("[data-mode],[data-side],[data-act],[data-spell],[data-revive]"); if(!el)return;
   if(el.dataset.mode){
     if(el.dataset.mode==="pvc"){sideMenu();return;}
     G.mode=el.dataset.mode;
